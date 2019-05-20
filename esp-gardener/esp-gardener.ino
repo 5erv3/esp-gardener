@@ -67,7 +67,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
       LOG(buf);
       discard = true;
     } else {
-      payload_int += (char) (((char) payload[i] - '0') * pow(10, (length - (i + 1))));
+      payload_int += ((char) payload[i] - '0') * pow(10, (length - (i + 1)));
     }
   }
   sprintf(buf, "payload: %d, discard: %d", payload_int, discard);
