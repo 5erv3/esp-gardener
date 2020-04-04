@@ -1,6 +1,7 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include "config.h"
+#include "esp_system.h"
 
 // uncomment logging when not needed
 #define LOGGING  1
@@ -166,7 +167,7 @@ void setup_wifi() {
     reconnect_counter ++;
     if (reconnect_counter >= WIFI_MAX_CONNECT_TIME_SEC){
       LOG("ERROR: WiFi connection counter expired");
-      ESP.restart();
+      esp_restart();
     }
   }  
   sprintf(buf, "WiFi connected, IP address: ");
@@ -186,7 +187,7 @@ void reconnect() {
       reconnect_counter++;
       if (reconnect_counter >= MQTT_RECONNECT_ATTEMPTS){
         LOG("ERROR: too many mqtt attempts");
-        ESP.restart();
+        esp_restart();
       }      
       sprintf(buf, "connection failed, rc %d", client.state());
       LOG(buf);      
