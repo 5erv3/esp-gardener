@@ -9,10 +9,10 @@
 #define WIFI_MAX_CONNECT_TIME_SEC 60
 #define MQTT_RECONNECT_ATTEMPTS   3
 
-#define WATERLEVEL_STOP_HEIGHT_CM           70
+#define WATERLEVEL_STOP_HEIGHT_CM           (75)
 #define PAUSE_BETWEEN_WATERLEVEL_MESSAGE_S  (60 * 60)
-#define DEFAULT_RESET_TIME                  (60 * 60 * 24)
 #define MAX_WATERINGTIME_S                  (60 * 45)
+#define WATCHDOG_TIMEOUT_MS                 ((PAUSE_BETWEEN_WATERLEVEL_MESSAGE_S*2) * 1000)
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -21,6 +21,7 @@ char buf[150];
 int reconnect_counter = 0;
 uint64_t loopcount = 0;
 int wateringcounter = 0;
+hw_timer_t *wdt_timer = NULL;
 
 void LOG(const char* logstring, bool newline = true){
   #if LOGGING
@@ -37,6 +38,11 @@ void initGPIO() {
   pinMode(sonicTriggerPin, OUTPUT);
   pinMode(sonicEchoPin, INPUT);
   digitalWrite(relaisPin, 0);
+}
+
+void IRAM_ATTR watchdog_timeout() {
+  LOG("watchdog reset");
+  esp_restart();
 }
 
 void control_waterpump(int sensorValue, int enable){
@@ -144,11 +150,19 @@ void init_connection(){
   client.setCallback(callback);
 }
 
+void init_watchdog(){
+  wdt_timer = timerBegin(0, 80, true);                  
+  timerAttachInterrupt(wdt_timer, &watchdog_timeout, true);
+  timerAlarmWrite(wdt_timer, WATCHDOG_TIMEOUT_MS * 1000, false);
+  timerAlarmEnable(wdt_timer);
+}
+
 void setup() {
   initGPIO();
 #if LOGGING
   Serial.begin(115200);
 #endif
+  init_watchdog();
   init_connection();
 }
 
@@ -205,24 +219,21 @@ int get_waterlevel_cm(){
   return distance;
 }
 
-void publish_waterlevel(){
+int publish_waterlevel(){
   int distance;  
+  int return_val;
   distance = get_waterlevel_cm();
   sprintf(buf, "%d", distance); 
-  client.publish(mqtt_topic_waterlevel, buf);
+  return_val = client.publish(mqtt_topic_waterlevel, buf);
   sprintf(buf, "published %d to topic %s", distance, mqtt_topic_waterlevel);
   LOG(buf);
+  return return_val;
 }
 
 
 
 void loop() {
   int distance;
-  
-  if (loopcount >= DEFAULT_RESET_TIME){
-    // reset esp after a default time, just because
-    ESP.restart();
-  }
 
   if (WiFi.status() != WL_CONNECTED){
     init_connection();
@@ -233,9 +244,15 @@ void loop() {
   }
   client.loop();
 
-  if (loopcount % PAUSE_BETWEEN_WATERLEVEL_MESSAGE_S == 0){
-    publish_waterlevel();
-  }
+  if (client.connected() && WiFi.status() == WL_CONNECTED){
+    int publish_success = false;
+    if (loopcount % PAUSE_BETWEEN_WATERLEVEL_MESSAGE_S == 0){
+      publish_success = publish_waterlevel();
+    }
+    if (publish_success){
+      timerWrite(wdt_timer, 0);
+    }    
+  }  
 
   if (wateringcounter > 0){
     wateringcounter --;
