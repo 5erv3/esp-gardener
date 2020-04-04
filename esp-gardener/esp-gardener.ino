@@ -12,7 +12,7 @@
 #define WATERLEVEL_STOP_HEIGHT_CM           (75)
 #define PAUSE_BETWEEN_WATERLEVEL_MESSAGE_S  (60 * 60)
 #define MAX_WATERINGTIME_S                  (60 * 45)
-#define WATCHDOG_TIMEOUT_MS                 ((PAUSE_BETWEEN_WATERLEVEL_MESSAGE_S*2) * 1000)
+#define WATCHDOG_TIMEOUT_MS                 (30 * 60 * 1000)
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -246,13 +246,11 @@ void loop() {
 
   if (client.connected() && WiFi.status() == WL_CONNECTED){
     int publish_success = false;
+    timerWrite(wdt_timer, 0);
     if (loopcount % PAUSE_BETWEEN_WATERLEVEL_MESSAGE_S == 0){
       publish_success = publish_waterlevel();
     }
-    if (publish_success){
-      timerWrite(wdt_timer, 0);
-    }    
-  }  
+  }
 
   if (wateringcounter > 0){
     wateringcounter --;
