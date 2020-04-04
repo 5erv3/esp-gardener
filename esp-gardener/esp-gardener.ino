@@ -6,13 +6,13 @@
 // uncomment logging when not needed
 #define LOGGING  1
 
-#define WIFI_MAX_CONNECT_TIME_SEC 30
+#define WIFI_MAX_CONNECT_TIME_SEC 60
 #define MQTT_RECONNECT_ATTEMPTS   3
 
-#define WATERLEVEL_STOP_HEIGHT_CM           80
+#define WATERLEVEL_STOP_HEIGHT_CM           70
 #define PAUSE_BETWEEN_WATERLEVEL_MESSAGE_S  (60 * 60)
 #define DEFAULT_RESET_TIME                  (60 * 60 * 24)
-#define MAX_WATERINGTIME_S                  (60 * 15)
+#define MAX_WATERINGTIME_S                  (60 * 45)
 
 WiFiClient espClient;
 PubSubClient client(espClient);
