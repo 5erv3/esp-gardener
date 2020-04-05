@@ -35,6 +35,8 @@ hw_timer_t *waterpump_timer = NULL;
 hw_timer_t *waterlevel_timer = NULL;
 
 int get_waterlevel_cm(void);
+int publish_start(void);
+void IRAM_ATTR waterpump_timeout(void);
 
 void LOG(const char* logstring, bool newline = true){
   #if LOGGING
@@ -59,15 +61,18 @@ void IRAM_ATTR watchdog_timeout() {
 }
 
 void start_waterpump_timer(int time_sec){
-  uint64_t time_interval_us = 0;
+  unsigned long time_interval_us = 0;
   if (time_sec > MAX_WATERINGTIME_S){
-    time_interval_us = ((uint64_t) MAX_WATERINGTIME_S) * 1000 * 1000;
+    time_interval_us = MAX_WATERINGTIME_S * 1000UL * 1000UL;
     sprintf(buf, "Lowered waterpump interval to max time of %d us", MAX_WATERINGTIME_S);
     LOG(buf);
   } else {
     LOG("watertimer start");
-    time_interval_us = ((uint64_t) time_sec) * 1000 * 1000;    
+    time_interval_us = time_sec * 1000UL * 1000UL;    
   }
+  waterpump_timer_expired = false;
+  waterpump_timer = timerBegin(WATERPUMP_TIMER_ID, 80, true);
+  timerAttachInterrupt(waterpump_timer, &waterpump_timeout, true);
   timerAlarmWrite(waterpump_timer, time_interval_us, false);
   timerAlarmEnable(waterpump_timer);
 }
@@ -132,14 +137,14 @@ void callback(char* topic, byte* payload, unsigned int length) {
   LOG(buf);
 
   if (!discard){
-    publish_waterlevel();
-    
+    publish_waterlevel();    
     if (payload_int > 0){   
       sprintf(buf, "setting waterpump to %d sec", payload_int);
       LOG(buf); 
       start_pump(payload_int);
     } else{
       stop_pump();
+      publish_stopreason(2);
     }
   }
 }
@@ -221,11 +226,6 @@ void init_waterlevel_timer(){
   timerAlarmEnable(waterlevel_timer);
 }
 
-void init_waterpump_timer(){
-  waterpump_timer = timerBegin(WATERPUMP_TIMER_ID, 80, true);
-  timerAttachInterrupt(waterpump_timer, &waterpump_timeout, true);
-}
-
 void setup() {
   initGPIO();
 #if LOGGING
@@ -233,7 +233,6 @@ void setup() {
 #endif
   init_watchdog();
   init_waterlevel_timer();
-  init_waterpump_timer();
   init_connection();
 }
 
@@ -267,7 +266,8 @@ void reconnect() {
     LOG("Attempting MQTT connection...");
     if (client.connect("ESP8266Client")) {
       LOG("connected", true);
-      publish_waterlevel();
+      publish_start();
+      publish_waterlevel();      
       client.subscribe(mqtt_topic_watercontrol);
     } else {
       reconnect_counter++;
@@ -302,6 +302,34 @@ int publish_waterlevel(){
   return return_val;
 }
 
+int publish_stopreason(int stopreason){
+  int return_val;
+  if (stopreason == 1){
+    sprintf(buf, "regular timer expiry");
+  } else if (stopreason == 0){
+    sprintf(buf, "waterlevel too low");
+  } else if (stopreason == 2){
+    sprintf(buf, "mqtt stop cmd");
+  } else {
+    sprintf(buf, "unexpected stop");
+  }
+  return_val = client.publish(mqtt_topic_stopreason, buf);
+  LOG(buf, false);
+  sprintf(buf, " published to topic %s", mqtt_topic_stopreason);
+  LOG(buf);
+  return return_val;
+}
+
+int publish_start(){
+  int return_val;
+  sprintf(buf, "%ld", millis());
+  return_val = client.publish(mqtt_topic_start, buf);
+  LOG(buf, false);
+  sprintf(buf, " published to topic %s", mqtt_topic_start);
+  LOG(buf);
+  return return_val;
+}
+
 void loop() {
   int distance;
   static bool stop_reported = true;
@@ -316,12 +344,14 @@ void loop() {
   client.loop();
 
   if (waterpump_running && !check_waterlevel_ok() || waterpump_timer_expired){
+    int stopreason = waterpump_timer_expired;
     waterpump_timer_expired = false;
     stop_pump();
     publish_waterlevel();
+    publish_stopreason(stopreason);
   }
 
-  if (waterlevel_timer_expired){
+  if (waterlevel_timer_expired){    
     waterlevel_timer_expired = false;
     publish_waterlevel();
   }

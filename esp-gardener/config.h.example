@@ -8,6 +8,8 @@ const char* mqtt_server = "192.168.0.0";
 const int   mqtt_port = 1883;
 const char* mqtt_topic_waterlevel = "gardener/waterlevelraw";
 const char* mqtt_topic_watercontrol = "gardener/watercontrol";
+const char* mqtt_topic_stopreason = "gardener/stop";
+const char* mqtt_topic_start = "gardener/start";
 
 const int relaisPin = 13;
 const int sonicTriggerPin = 14;
