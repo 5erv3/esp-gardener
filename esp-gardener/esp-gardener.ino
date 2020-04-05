@@ -10,18 +10,31 @@
 #define MQTT_RECONNECT_ATTEMPTS   3
 
 #define WATERLEVEL_STOP_HEIGHT_CM           (75)
-#define PAUSE_BETWEEN_WATERLEVEL_MESSAGE_S  (60 * 60)
+
+#define WATERLEVEL_TIME_INTERVAL_US         (60 * 60 * 1000 * 1000)
 #define MAX_WATERINGTIME_S                  (60 * 45)
-#define WATCHDOG_TIMEOUT_MS                 (30 * 60 * 1000)
+#define WATCHDOG_TIMEOUT_US                 (30 * 60 * 1000 * 1000)
+#define MAX_TIMER_LEN_US                    (70 * 60 * 1000 * 1000)
+
+#define WATCHDOG_TIMER_ID   0
+#define WATERLEVEL_TIMER_ID 1
+#define WATERPUMP_TIMER_ID  2
 
 WiFiClient espClient;
 PubSubClient client(espClient);
 
 char buf[150];
 int reconnect_counter = 0;
-uint64_t loopcount = 0;
-int wateringcounter = 0;
+
+volatile bool waterpump_running = false;
+volatile bool waterpump_timer_expired = false;
+volatile bool waterlevel_timer_expired = false;
+
 hw_timer_t *wdt_timer = NULL;
+hw_timer_t *waterpump_timer = NULL;
+hw_timer_t *waterlevel_timer = NULL;
+
+int get_waterlevel_cm(void);
 
 void LOG(const char* logstring, bool newline = true){
   #if LOGGING
@@ -45,21 +58,59 @@ void IRAM_ATTR watchdog_timeout() {
   esp_restart();
 }
 
+void start_waterpump_timer(int time_sec){
+  uint64_t time_interval_us = 0;
+  if (time_sec > MAX_WATERINGTIME_S){
+    time_interval_us = ((uint64_t) MAX_WATERINGTIME_S) * 1000 * 1000;
+    sprintf(buf, "Lowered waterpump interval to max time of %d us", MAX_WATERINGTIME_S);
+    LOG(buf);
+    timerAlarmWrite(waterpump_timer, MAX_WATERINGTIME_S, true);
+  } else {
+    time_interval_us = ((uint64_t) time_sec) * 1000 * 1000;
+    timerAlarmWrite(waterpump_timer, time_interval_us, true);
+  }
+  timerAlarmEnable(waterpump_timer);
+}
+
+void stop_pump(){
+  timerAlarmDisable(waterpump_timer);
+  control_waterpump(0,0);
+}
+
 void control_waterpump(int sensorValue, int enable){
   if (!enable){
     if (digitalRead(relaisPin) == 1){
      LOG("Disabling water pump");
-     wateringcounter = 0;
+     waterpump_running = false;
+     stop_pump();
     }
     digitalWrite(relaisPin, 0);
   }else if (sensorValue >= WATERLEVEL_STOP_HEIGHT_CM){
     sprintf(buf, "Waterlevel %d >= %d, disabling water pump", sensorValue, WATERLEVEL_STOP_HEIGHT_CM);
     LOG(buf);
     digitalWrite(relaisPin, 0);
-    wateringcounter = 0; 
+    waterpump_running = false;
+    stop_pump();
   } else {
     digitalWrite(relaisPin, 1);
+    waterpump_running = true;
   }
+}
+
+void start_pump(int seconds){
+  control_waterpump(get_waterlevel_cm(), 1);
+  if (waterpump_running){
+    start_waterpump_timer(seconds);
+  }  
+}
+
+void IRAM_ATTR waterpump_timeout(){
+  control_waterpump(0,0);
+  waterpump_timer_expired = true;
+}
+
+void IRAM_ATTR waterlevel_timeout(){
+  waterlevel_timer_expired = true;
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
@@ -81,20 +132,18 @@ void callback(char* topic, byte* payload, unsigned int length) {
   LOG(buf);
 
   if (!discard){
+    publish_waterlevel();
     
-    if (payload_int > MAX_WATERINGTIME_S){
-      payload_int = MAX_WATERINGTIME_S;
-    }
-
     if (payload_int > 0){   
-      if ( wateringcounter == 0){
-        sprintf(buf, "setting wateringcounter to %d sec", payload_int);
+      if (!waterpump_running){
+        sprintf(buf, "setting waterpump to %d sec", payload_int);
         LOG(buf); 
-        wateringcounter = payload_int;
-      }      
+        start_pump(payload_int);        
+      } else {
+        // todo: already running mqtt notice
+      }
     } else{
-      wateringcounter = 0;
-      control_waterpump(0,0);
+      stop_pump();
     }
   }
 }
@@ -151,10 +200,34 @@ void init_connection(){
 }
 
 void init_watchdog(){
-  wdt_timer = timerBegin(0, 80, true);                  
+  wdt_timer = timerBegin(WATCHDOG_TIMER_ID, 80, true);                  
   timerAttachInterrupt(wdt_timer, &watchdog_timeout, true);
-  timerAlarmWrite(wdt_timer, WATCHDOG_TIMEOUT_MS * 1000, false);
+  if (WATCHDOG_TIMEOUT_US > MAX_TIMER_LEN_US){
+    sprintf(buf, "Lowered watchdog interval to max time of %d us", MAX_TIMER_LEN_US);
+    LOG(buf);
+    timerAlarmWrite(wdt_timer, MAX_TIMER_LEN_US, false);
+  } else {
+    timerAlarmWrite(wdt_timer, WATCHDOG_TIMEOUT_US, false);
+  }  
   timerAlarmEnable(wdt_timer);
+}
+
+void init_waterlevel_timer(){
+  waterlevel_timer = timerBegin(WATERLEVEL_TIMER_ID, 80, true);
+  timerAttachInterrupt(waterlevel_timer, &waterlevel_timeout, true);
+  if (WATERLEVEL_TIME_INTERVAL_US > MAX_TIMER_LEN_US){
+    sprintf(buf, "Lowered waterlevel interval to max time of %d us", MAX_TIMER_LEN_US);
+    LOG(buf);
+    timerAlarmWrite(waterlevel_timer, MAX_TIMER_LEN_US, true);
+  } else {
+    timerAlarmWrite(waterlevel_timer, WATERLEVEL_TIME_INTERVAL_US, true);
+  }
+  timerAlarmEnable(waterlevel_timer);
+}
+
+void init_waterpump_timer(){
+  waterpump_timer = timerBegin(WATERPUMP_TIMER_ID, 80, true);
+  timerAttachInterrupt(waterpump_timer, &waterpump_timeout, true);
 }
 
 void setup() {
@@ -163,6 +236,8 @@ void setup() {
   Serial.begin(115200);
 #endif
   init_watchdog();
+  init_waterlevel_timer();
+  init_waterpump_timer();
   init_connection();
 }
 
@@ -230,10 +305,9 @@ int publish_waterlevel(){
   return return_val;
 }
 
-
-
 void loop() {
   int distance;
+  static bool stop_reported = true;
 
   if (WiFi.status() != WL_CONNECTED){
     init_connection();
@@ -244,24 +318,26 @@ void loop() {
   }
   client.loop();
 
-  if (client.connected() && WiFi.status() == WL_CONNECTED){
-    int publish_success = false;
-    timerWrite(wdt_timer, 0);
-    if (loopcount % PAUSE_BETWEEN_WATERLEVEL_MESSAGE_S == 0){
-      publish_success = publish_waterlevel();
-    }
+  if (waterpump_timer_expired){
+    waterpump_timer_expired = false;
+    control_waterpump(0,0);
+    publish_waterlevel();
+    //todo: report stop
   }
 
-  if (wateringcounter > 0){
-    wateringcounter --;
+  if (waterlevel_timer_expired){
+    waterlevel_timer_expired = false;
+    publish_waterlevel();
+  }
+
+  if (client.connected() && WiFi.status() == WL_CONNECTED){
+    timerWrite(wdt_timer, 0);
+  }
+
+  if (waterpump_running){
     distance = get_waterlevel_cm();
     control_waterpump(distance, 1);
-    sprintf(buf, "Watercounter: %d sec", wateringcounter);
-    LOG(buf);
-  } else {
-    control_waterpump(0,0);
   }
   
   delay(1000);
-  loopcount++;
 }
