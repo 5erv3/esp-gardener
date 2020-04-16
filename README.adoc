@@ -1,5 +1,9 @@
 = ESP32 Controlled Gardener
 
+ESP32 controlled gardener to automatically control a waterpump for watering plants.
+
+Also checkout my other project https://github.com/5erv3/esp-moisture-sensor[ESP Moisture Sensor] for sensing the soil moisture.
+
 == Installation
 
 * Install latest Arduino IDE
