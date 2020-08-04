@@ -20,6 +20,8 @@
 #define WATERLEVEL_TIMER_ID 1
 #define WATERPUMP_TIMER_ID  2
 
+#define DISABLE_WATERLEVEL_CHECK  0
+
 WiFiClient espClient;
 PubSubClient client(espClient);
 
@@ -89,6 +91,10 @@ void stop_pump(){
 }
 
 bool check_waterlevel_ok(){
+  if (DISABLE_WATERLEVEL_CHECK){
+    return true;
+  }
+
   if (get_waterlevel_cm() >= WATERLEVEL_STOP_HEIGHT_CM){
     return false;
   } else {
