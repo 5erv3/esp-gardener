@@ -270,7 +270,7 @@ void reconnect() {
   reconnect_counter = 0;
   while (!client.connected()) {
     LOG("Attempting MQTT connection...");
-    if (client.connect("ESP8266Client")) {
+    if (client.connect("ESP8266Client_gardener")) {
       LOG("connected", true);
       publish_start();
       publish_waterlevel();      
